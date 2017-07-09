@@ -3,7 +3,6 @@ import argparse
 from itertools import chain
 import json
 from pathlib import Path
-import random
 import shutil
 from typing import Dict, List
 
@@ -114,20 +113,10 @@ def f2_loss(outputs, targets):
     return 1 - f2.mean()
 
 
-def stratified_split(args, paths: List[Path]):
-    train_labels = pd.read_csv(utils.DATA_ROOT / 'train_v2.csv')
-    sort_keys = {stem: [c in tags.split() for c in dataset.RARE_CLASSES]
-                 for stem, tags in zip(train_labels['image_name'],
-                                       train_labels['tags'])}
-    paths = list(paths)
-    random.seed(1)
-    random.shuffle(paths)
-    train_paths, valid_paths = [], []
-    for i, p in enumerate(sorted(paths, key=lambda p: sort_keys[p.stem])):
-        if i % args.n_folds == args.fold - 1:
-            valid_paths.append(p)
-        else:
-            train_paths.append(p)
+def load_fold(fold: int):
+    fold_root = utils.DATA_ROOT / 'fold{}'.format(fold)
+    valid_paths = pd.read_csv(fold_root / 'val.csv')['path']
+    train_paths = pd.read_csv(fold_root / 'train.csv')['path']
     return train_paths, valid_paths
 
 
@@ -151,12 +140,7 @@ def main():
     model = utils.cuda(model)
     loss = f2_loss if args.f2_loss else nn.MultiLabelSoftMarginLoss()
 
-    random.seed(1)
-    paths = sorted(utils.DATA_ROOT.joinpath('train-jpg').glob('*.jpg'))
-    if args.limit:
-        paths = random.sample(paths, args.limit)
-    split_fn = stratified_split if args.stratified else utils.train_valid_split
-    train_paths, valid_paths = split_fn(args, paths)
+    train_paths, valid_paths = load_fold(args.fold)
 
     aug_transform = (augmentation.with_scale_transform if args.scale_aug else
                      augmentation.default_transform)

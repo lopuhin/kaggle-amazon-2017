@@ -23,7 +23,7 @@ from torchvision.transforms import ToTensor, Normalize, Compose
 import tqdm
 
 
-DATA_ROOT = Path(__file__).absolute().parent / 'data'
+DATA_ROOT = Path(__file__).absolute().parent / '../_data'
 
 cuda_is_available = torch.cuda.is_available()
 
@@ -61,14 +61,6 @@ def load_image(path: Path):
     return Image.open(str(path)).convert('RGB')
 
 
-def train_valid_split(args, img_paths):
-    img_paths = np.array(sorted(img_paths))
-    cv_split = KFold(n_splits=args.n_folds, shuffle=True, random_state=42)
-    img_folds = list(cv_split.split(img_paths))
-    train_ids, valid_ids = img_folds[args.fold - 1]
-    return img_paths[train_ids], img_paths[valid_ids]
-
-
 def profile(fn):
     @functools.wraps(fn)
     def wrapped(*args, **kwargs):
@@ -96,8 +88,8 @@ def add_args(parser):
     arg('--n-epochs', type=int, default=100)
     arg('--lr', type=float, default=0.0001)
     arg('--workers', type=int, default=2)
-    arg('--fold', type=int, default=1)
-    arg('--n-folds', type=int, default=5)
+    arg('--fold', type=int, default=0)
+    arg('--n-folds', type=int, default=10)
     arg('--clean', action='store_true')
     arg('--epoch-size', type=int)
 
