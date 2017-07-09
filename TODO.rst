@@ -1,5 +1,7 @@
 TODO:
 
+- train on new folds, make OOF predicts
+
 submissions:
 
 nn training:
