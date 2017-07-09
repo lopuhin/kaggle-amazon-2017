@@ -9,17 +9,22 @@ import utils
 
 class RandomTranspose:
     def __call__(self, image):
-        op = random.choice([
+        mirror = random.choice([
             None,
-            Image.FLIP_LEFT_RIGHT,
-            Image.FLIP_TOP_BOTTOM,
+            Image.FLIP_LEFT_RIGHT
+        ])
+        if mirror is not None:
+            image = image.transpose(mirror)
+
+        rotate = random.choice([
+            None,
             Image.ROTATE_90,
             Image.ROTATE_180,
             Image.ROTATE_270,
-            Image.TRANSPOSE,
         ])
-        if op is not None:
-            image = image.transpose(op)
+        if rotate is not None:
+            image = image.transpose(rotate)
+
         return image
 
 
