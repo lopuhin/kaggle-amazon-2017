@@ -1,11 +1,13 @@
 eli5==0.6.0
 json_lines==0.3.1
+h5py==2.7.0
 matplotlib==2.0.2
 opencv-python==3.2.0.7
 numpy==1.13.0
 pandas==0.20.2
 scikit-learn==0.18.1
 statprof-smarkets==1.0.0
+tables==3.4.2
 torch==0.1.12.post2
 torchvision==0.1.8
 tqdm==4.11.2

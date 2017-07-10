@@ -227,7 +227,7 @@ def main():
             batch_size=args.batch_size,
             transform=transform,
             test_aug=args.test_aug,
-            n_random_aug=args.n_test_aug,
+            n_random_aug=args.n_random_aug,
         )
         if args.mode == 'predict_valid':
             predict(model, valid_paths,

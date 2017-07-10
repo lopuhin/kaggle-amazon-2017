@@ -62,7 +62,7 @@ def load_recalibrate_prediction(path: Path, recalibrate: bool,
                                 ) -> Tuple[Optional[pd.DataFrame], float]:
     prefix, aug_kind = path.stem.split('_', 1)
     assert prefix in {'test', 'val'}
-    valid_df = pd.read_csv(
+    valid_df = pd.read_hdf(
         path.parent / 'val_{}.h5'.format(aug_kind), index_col=0)
     valid_data = valid_df.as_matrix()
 
@@ -84,7 +84,7 @@ def load_recalibrate_prediction(path: Path, recalibrate: bool,
     f2_score = dataset.f2_score(true_data, valid_df.as_matrix() > THRESHOLD)
 
     if path.exists() and prefix != 'val':
-        test_df = pd.read_csv(path, index_col=0).groupby(level=0).mean()
+        test_df = pd.read_hdf(path, index_col=0).groupby(level=0).mean()
         test_df_logits = logit(test_df)
         if recalibrate:
             test_df_logits = recalibrated_logits(test_df_logits, thresholds)
