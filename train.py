@@ -117,7 +117,7 @@ def load_fold(fold: int):
     fold_root = utils.DATA_ROOT / 'fold{}'.format(fold)
     valid_paths = pd.read_csv(fold_root / 'val.csv')['path']
     train_paths = pd.read_csv(fold_root / 'train.csv')['path']
-    return train_paths, valid_paths
+    return [[Path(x) for x in paths] for paths in [train_paths, valid_paths]]
 
 
 def main():
