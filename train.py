@@ -8,12 +8,13 @@ from typing import Dict, List
 
 import pandas as pd
 import numpy as np
+from scipy.stats.mstats import gmean
 import torch
 from torch import nn
 from torch.nn import functional as F
 from torch.optim import Adam, SGD
 from torch.utils.data import DataLoader, Dataset
-from torchvision.transforms import Compose
+from torchvision.transforms import Compose, CenterCrop
 import tqdm
 
 import utils
@@ -65,14 +66,31 @@ def validation(model: nn.Module, criterion, valid_loader) -> Dict[str, float]:
     return {'valid_loss': valid_loss, 'valid_f2': valid_f2}
 
 
-class PredictionDataset:
-    def __init__(self, paths: List[Path], transform, n_test_aug: int):
+class RandomAugDataset:
+    def __init__(self, paths: List[Path], transform, n_random_aug: int):
         self.paths = paths
         self.transform = transform
-        self.n_test_aug = n_test_aug
+        self.n_random_aug = n_random_aug
 
     def __len__(self):
-        return len(self.paths) * self.n_test_aug
+        return len(self.paths) * self.n_random_aug
+
+    def __getitem__(self, idx):
+        path = self.paths[idx % len(self.paths)]
+        image = utils.load_image(path)
+        return self.transform(image), path.stem
+
+
+class CenterCropDataset:
+    def __init__(self, paths: List[Path]):
+        self.paths = paths
+        self.transform = Compose([
+            CenterCrop(224),  # FIXME - Inception
+            utils.img_transform,  # FIXME - Inception
+        ])
+
+    def __len__(self):
+        return len(self.paths)
 
     def __getitem__(self, idx):
         path = self.paths[idx % len(self.paths)]
@@ -81,9 +99,16 @@ class PredictionDataset:
 
 
 def predict(model, paths: List[Path], out_path: Path,
-            transform, batch_size: int, n_test_aug: int):
+            transform, batch_size: int, test_aug: str, n_random_aug: int):
+    if test_aug == 'center':
+        ds = CenterCropDataset(paths)
+    elif test_aug == 'random':
+        ds = RandomAugDataset(paths, transform, n_random_aug)
+    else:
+        raise ValueError('augmentation "{}" not supported'.format(test_aug))
+
     loader = DataLoader(
-        dataset=PredictionDataset(paths, transform, n_test_aug),
+        dataset=ds,
         shuffle=False,
         batch_size=batch_size,
         num_workers=1,
@@ -99,7 +124,8 @@ def predict(model, paths: List[Path], out_path: Path,
     all_outputs = np.concatenate(all_outputs)
     df = pd.DataFrame(data=all_outputs, index=all_stems,
                       columns=dataset.CLASSES)
-    df.to_csv(out_path)
+    df = df.groupby(level=0).agg(lambda x: gmean(list(x)))
+    df.to_hdf(out_path, 'prob', index_label='image_name')
     print('Saved predictions to {}'.format(out_path))
 
 
@@ -127,11 +153,12 @@ def main():
     arg('--mode', choices=['train', 'valid', 'predict_valid', 'predict_test'],
         default='train')
     arg('--limit', type=int, help='use only N images for valid/train')
-    arg('--n-test-aug', type=int, default=5,
-        help='number of test time augmentations')
     arg('--f2-loss', action='store_true')
     arg('--scale-aug', action='store_true')
     arg('--stratified', action='store_true')
+    arg('--test-aug', choices=['center', 'random', '12crops', 'scaled'])
+    arg('--n-random-aug', type=int, default=8,
+        help='number of random test time augmentations')
     utils.add_args(parser)
     args = parser.parse_args()
 
@@ -194,22 +221,25 @@ def main():
         model.load_state_dict(state['model'])
         validation(model, loss, tqdm.tqdm(valid_loader, desc='Validation'))
 
-    elif args.mode == 'predict_valid':
+    elif args.mode.startswith('predict'):
         utils.load_best_model(model, root)
-        predict(model, valid_paths, out_path=root / 'valid.csv',
-                transform=transform,
-                batch_size=args.batch_size,
-                n_test_aug=args.n_test_aug)
-
-    elif args.mode == 'predict_test':
-        utils.load_best_model(model, root)
-        test_paths = list(chain(
-            (utils.DATA_ROOT / 'test-jpg').glob('*.jpg'),
-            (utils.DATA_ROOT / 'test-jpg-additional').glob('*.jpg')))
-        predict(model, test_paths, out_path=root / 'test.csv',
-                transform=transform,
-                batch_size=args.batch_size,
-                n_test_aug=args.n_test_aug)
+        predict_kwargs = dict(
+            batch_size=args.batch_size,
+            transform=transform,
+            test_aug=args.test_aug,
+            n_random_aug=args.n_test_aug,
+        )
+        if args.mode == 'predict_valid':
+            predict(model, valid_paths,
+                    out_path=root / 'val_{}.h5'.format(args.test_aug),
+                    **predict_kwargs)
+        elif args.mode == 'predict_test':
+            test_paths = list(chain(
+                (utils.DATA_ROOT / 'test-jpg').glob('*.jpg'),
+                (utils.DATA_ROOT / 'test-jpg-additional').glob('*.jpg')))
+            predict(model, test_paths,
+                    out_path=root / 'test_{}.h5'.format(args.test_aug),
+                    **predict_kwargs)
 
 
 if __name__ == '__main__':

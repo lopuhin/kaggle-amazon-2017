@@ -3,7 +3,7 @@ import argparse
 from functools import partial
 from pathlib import Path
 import multiprocessing
-from typing import Tuple
+from typing import Tuple, Optional
 import warnings
 
 import pandas as pd
@@ -17,24 +17,25 @@ def main():
     parser = argparse.ArgumentParser()
     arg = parser.add_argument
     arg('predictions', nargs='+')
-    arg('output')
+    arg('--output')
     arg('--recalibrate', type=int, default=1)
-    arg('--workers', type=int, default=24)
     arg('--vote', action='store_true')
     args = parser.parse_args()
 
     predictions, f2s = [], []
-    with multiprocessing.Pool(processes=args.workers or 1) as pool:
-        pmap = pool.map if args.workers else map
+    with multiprocessing.Pool() as pool:
         for filename, (pred, f2) in zip(
                 args.predictions,
-                pmap(partial(load_recalibrate_prediction,
-                             recalibrate=args.recalibrate),
-                     map(Path, args.predictions))):
-            predictions.append(pred)
+                pool.map(partial(load_recalibrate_prediction,
+                                 recalibrate=args.recalibrate),
+                         map(Path, args.predictions))):
+            if args.output:
+                predictions.append(pred)
             f2s.append(f2)
             print('{:.5f} {}'.format(f2, filename))
     print('Mean score: {:.5f}'.format(np.mean(f2s)))
+    if not args.output:
+        return
 
     prediction = pd.concat(predictions)
     if args.vote:
@@ -58,9 +59,11 @@ THRESHOLD = 0.2
 
 
 def load_recalibrate_prediction(path: Path, recalibrate: bool,
-                                ) -> Tuple[pd.DataFrame, float]:
-    valid_df = (pd.read_csv(path.parent / 'valid.csv', index_col=0)
-                .groupby(level=0).mean())
+                                ) -> Tuple[Optional[pd.DataFrame], float]:
+    prefix, aug_kind = path.stem.split('_', 1)
+    assert prefix in {'test', 'val'}
+    valid_df = pd.read_csv(
+        path.parent / 'val_{}.h5'.format(aug_kind), index_col=0)
     valid_data = valid_df.as_matrix()
 
     true_df = pd.read_csv(utils.DATA_ROOT / 'train_v2.csv', index_col=0)
@@ -69,7 +72,6 @@ def load_recalibrate_prediction(path: Path, recalibrate: bool,
         for tag in tags.split():
             true_data[i, dataset.CLASSES.index(tag)] = 1
 
-    test_df = pd.read_csv(path, index_col=0).groupby(level=0).mean()
     if recalibrate:
         valid_df_logits = logit(valid_df)
         f2_score = dataset.f2_score(
@@ -81,10 +83,15 @@ def load_recalibrate_prediction(path: Path, recalibrate: bool,
         valid_df = sigmoid(valid_df_logits)  # type: pd.DataFrame
     f2_score = dataset.f2_score(true_data, valid_df.as_matrix() > THRESHOLD)
 
-    test_df_logits = logit(test_df)
-    if recalibrate:
-        test_df_logits = recalibrated_logits(test_df_logits, thresholds)
-    return sigmoid(test_df_logits), f2_score
+    if path.exists() and prefix != 'val':
+        test_df = pd.read_csv(path, index_col=0).groupby(level=0).mean()
+        test_df_logits = logit(test_df)
+        if recalibrate:
+            test_df_logits = recalibrated_logits(test_df_logits, thresholds)
+        test_df = sigmoid(test_df_logits)
+    else:
+        test_df = None
+    return test_df, f2_score
 
 
 def recalibrated_logits(df, thresholds):
