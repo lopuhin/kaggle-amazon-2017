@@ -38,4 +38,11 @@ CLOUDY_ID = CLASSES.index('cloudy')
 
 
 def f2_score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    return fbeta_score(y_true, y_pred, beta=2, average='samples')
+    # same as fbeta_score(y_true, y_pred, beta=2, average='samples')
+    # but faster
+    tp = (y_true * y_pred).sum(axis=1)
+    r = tp / y_true.sum(axis=1)
+    p = tp / (y_pred.sum(axis=1) + 1e-5)
+    beta2 = 4
+    f2 = (1 + beta2) * p * r / (beta2 * p + r + 1e-5)
+    return f2.mean()
