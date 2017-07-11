@@ -1,6 +1,7 @@
 TODO:
 
-- train on new folds, make OOF predicts
+- tweak blending
+- add from scratch models
 
 submissions:
 

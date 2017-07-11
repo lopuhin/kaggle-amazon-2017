@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import json_lines
 import numpy as np
 from PIL import Image
+from scipy.stats.mstats import gmean
 from sklearn.model_selection import KFold
 import statprof
 import torch
@@ -204,6 +205,14 @@ def imap_fixed_output_buffer(fn, it, threads: int):
             futures.append(executor.submit(fn, x))
         for future in futures:
             yield future.result()
+
+
+def gmean_df(df):
+    return df.groupby(level=0).agg(lambda x: gmean(list(x)))
+
+
+def mean_df(df):
+    return df.groupby(level=0).mean()
 
 
 def plot(*args, ymin=None, ymax=None, xmin=None, xmax=None, params=False,

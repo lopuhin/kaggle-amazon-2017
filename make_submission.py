@@ -8,6 +8,7 @@ import warnings
 
 import pandas as pd
 import numpy as np
+from sklearn.model_selection import KFold
 
 import dataset
 import utils
@@ -19,29 +20,32 @@ def main():
     arg('predictions', nargs='+')
     arg('--output')
     arg('--recalibrate', type=int, default=1)
-    arg('--vote', action='store_true')
+    arg('--merge', default='mean', choices=['mean', 'gmean', 'vote'])
+    arg('--verbose', action='store_true')
     args = parser.parse_args()
 
-    predictions, f2s = [], []
+    test_predictions, valid_predictions, valid_f2s = [], [], []
     with multiprocessing.Pool() as pool:
-        for filename, (pred, f2) in zip(
+        for filename, (test_pred, valid_pred, valid_f2) in zip(
                 args.predictions,
                 pool.map(partial(load_recalibrate_prediction,
-                                 recalibrate=args.recalibrate),
+                                 recalibrate=args.recalibrate,
+                                 verbose=args.verbose),
                          map(Path, args.predictions))):
             if args.output:
-                predictions.append(pred)
-            f2s.append(f2)
-            print('{:.5f} {}'.format(f2, filename))
-    print('Mean score: {:.5f}'.format(np.mean(f2s)))
+                test_predictions.append(test_pred)
+            valid_predictions.append(valid_pred)
+            valid_f2s.append(valid_f2)
+            print('{:.5f} valid F2 for {}'.format(valid_f2, filename))
+    print('Mean F2 score: {:.5f}'.format(np.mean(valid_f2s)))
+    valid_prediction = merge_predictions(valid_predictions, args.merge)
+    print('Final valid F2 after {} blend: {:.5f}'.format(
+        args.merge, dataset.f2_score(get_true_data(valid_prediction),
+                                     valid_prediction.as_matrix())))
     if not args.output:
         return
 
-    prediction = pd.concat(predictions)
-    if args.vote:
-        prediction = (prediction > THRESHOLD).groupby(level=0).median()
-    else:
-        prediction = prediction.groupby(level=0).mean() > THRESHOLD
+    prediction = merge_predictions(test_predictions, args.merge)
     out_df = pd.DataFrame([
         {'image_name': image_name,
          'tags': ' '.join(c for c in prediction.columns if row[c])
@@ -55,32 +59,51 @@ def main():
     print('Saved submission to {}'.format(args.output))
 
 
+def merge_predictions(predictions, merge_mode):
+    prediction = pd.concat(predictions)
+    if merge_mode == 'vote':
+        return (prediction > THRESHOLD).groupby(level=0).median()
+    elif merge_mode == 'mean':
+        return utils.mean_df(prediction) > THRESHOLD
+    elif merge_mode == 'gmean':
+        return utils.gmean_df(prediction) > THRESHOLD
+
+
 THRESHOLD = 0.2
 
 
-def load_recalibrate_prediction(path: Path, recalibrate: bool,
-                                ) -> Tuple[Optional[pd.DataFrame], float]:
+def load_recalibrate_prediction(
+        path: Path, recalibrate: bool, verbose=False,
+        ) -> Tuple[Optional[pd.DataFrame], pd.DataFrame, float]:
     prefix, aug_kind = path.stem.split('_', 1)
     assert prefix in {'test', 'val'}
     valid_df = pd.read_hdf(
         path.parent / 'val_{}.h5'.format(aug_kind), index_col=0)
     valid_data = valid_df.as_matrix()
-
-    true_df = pd.read_csv(utils.DATA_ROOT / 'train_v2.csv', index_col=0)
-    true_data = np.zeros((len(valid_df), dataset.N_CLASSES), dtype=np.uint8)
-    for i, tags in enumerate(true_df.loc[valid_df.index]['tags']):
-        for tag in tags.split():
-            true_data[i, dataset.CLASSES.index(tag)] = 1
+    true_data = get_true_data(valid_df)
 
     if recalibrate:
-        valid_df_logits = logit(valid_df)
         f2_score = dataset.f2_score(
             true_data, valid_df.as_matrix() > THRESHOLD)
         print('{} with default threshold: {:.5f}'.format(path, f2_score))
-        thresholds = optimise_f2_thresholds(true_data, valid_data)
-        print('{} thresholds: {}'.format(path, thresholds))
-        valid_df_logits = recalibrated_logits(valid_df_logits, thresholds)
-        valid_df = sigmoid(valid_df_logits)  # type: pd.DataFrame
+        thresholds, f2 = optimise_f2_thresholds(true_data, valid_data)
+        if verbose:
+            print('Train F2 {:.5f}, thresholds: {}'.format(f2, thresholds))
+        valid_dfs = []
+        valid_df_logits = logit(valid_df)
+        for train_ids, valid_ids in (
+                KFold(n_splits=5, shuffle=True).split(true_data)):
+            fold_thresholds, f2 = optimise_f2_thresholds(
+                true_data[train_ids], valid_data[train_ids])
+            valid_dfs.append(sigmoid(
+                recalibrated_logits(valid_df_logits.iloc[valid_ids],
+                                    fold_thresholds)))
+            if verbose:
+                print('Train F2: {:.5f}, valid F2 {:.5f}, thresholds {}'
+                      .format(f2, dataset.f2_score(true_data[valid_ids],
+                                                   valid_dfs[-1] > THRESHOLD),
+                              fold_thresholds))
+        valid_df = pd.concat(valid_dfs).loc[valid_df.index]
     f2_score = dataset.f2_score(true_data, valid_df.as_matrix() > THRESHOLD)
 
     if path.exists() and prefix != 'val':
@@ -91,7 +114,16 @@ def load_recalibrate_prediction(path: Path, recalibrate: bool,
         test_df = sigmoid(test_df_logits)
     else:
         test_df = None
-    return test_df, f2_score
+    return test_df, valid_df, f2_score
+
+
+def get_true_data(df):
+    true_df = pd.read_csv(utils.DATA_ROOT / 'train_v2.csv', index_col=0)
+    true_data = np.zeros((len(df), dataset.N_CLASSES), dtype=np.uint8)
+    for i, tags in enumerate(true_df.loc[df.index]['tags']):
+        for tag in tags.split():
+            true_data[i, dataset.CLASSES.index(tag)] = 1
+    return true_data
 
 
 def recalibrated_logits(df, thresholds):
@@ -122,6 +154,7 @@ def optimise_f2_thresholds(y, p, verbose=False, resolution=100):
         return score
 
     x = [THRESHOLD] * dataset.N_CLASSES
+    best_score = 0
     for i, cls in enumerate(dataset.CLASSES):
         if cls in dataset.RARE_CLASSES:
             continue
@@ -138,7 +171,7 @@ def optimise_f2_thresholds(y, p, verbose=False, resolution=100):
         if verbose:
             print(i, best_i2, best_score)
 
-    return x
+    return x, best_score
 
 
 if __name__ == '__main__':
