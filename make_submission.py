@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import argparse
+from collections import defaultdict
 from functools import partial
 from pathlib import Path
+import re
 import multiprocessing
 from typing import Tuple, Optional
 import warnings
@@ -20,32 +22,42 @@ def main():
     arg('predictions', nargs='+')
     arg('--output')
     arg('--recalibrate', type=int, default=1)
+    arg('--weighted', type=float, default=0)
     arg('--merge', default='mean', choices=['mean', 'gmean', 'vote'])
     arg('--verbose', action='store_true')
     args = parser.parse_args()
 
-    test_predictions, valid_predictions, valid_f2s = [], [], []
+    test_predictions, valid_predictions, valid_f2s, folds = [], [], [], []
     with multiprocessing.Pool() as pool:
-        for filename, (test_pred, valid_pred, valid_f2) in zip(
-                args.predictions,
+        paths = [Path(f) for f in sorted(args.predictions)]
+        for path, (test_pred, valid_pred, valid_f2) in zip(
+                paths,
                 pool.map(partial(load_recalibrate_prediction,
                                  recalibrate=args.recalibrate,
                                  verbose=args.verbose),
-                         map(Path, args.predictions))):
+                         paths)):
             if args.output:
                 test_predictions.append(test_pred)
             valid_predictions.append(valid_pred)
             valid_f2s.append(valid_f2)
-            print('{:.5f} valid F2 for {}'.format(valid_f2, filename))
+            folds.append(int(
+                re.match(r'fold_?(\d+)_', path.parent.name).groups()[0]))
+            print('{:.5f} valid F2 for {}'.format(valid_f2, path))
     print('Mean F2 score: {:.5f}'.format(np.mean(valid_f2s)))
-    valid_prediction = merge_predictions(valid_predictions, args.merge)
-    print('Final valid F2 after {} blend: {:.5f}'.format(
-        args.merge, dataset.f2_score(get_true_data(valid_prediction),
-                                     valid_prediction.as_matrix())))
+    valid_prediction = merge_predictions(
+        valid_predictions, args.merge,
+        f2s=valid_f2s, folds=folds, weighted=args.weighted)
+    print('Final valid F2 after {} blend{}: {:.5f}'.format(
+        args.merge,
+        ' score weighted {}'.format(args.weighted) if args.weighted else '',
+        dataset.f2_score(get_true_data(valid_prediction),
+                         valid_prediction.as_matrix())))
     if not args.output:
         return
 
-    prediction = merge_predictions(test_predictions, args.merge)
+    prediction = merge_predictions(
+        test_predictions, args.merge,
+        f2s=valid_f2s, folds=folds, weighted=args.weighted)
     out_df = pd.DataFrame([
         {'image_name': image_name,
          'tags': ' '.join(c for c in prediction.columns if row[c])
@@ -59,7 +71,18 @@ def main():
     print('Saved submission to {}'.format(args.output))
 
 
-def merge_predictions(predictions, merge_mode):
+def merge_predictions(predictions, merge_mode, f2s, folds, weighted=0):
+    if weighted:
+        f2s_by_fold = defaultdict(dict)
+        for i, (fold, f2) in enumerate(zip(folds, f2s)):
+            f2s_by_fold[fold][i] = f2
+        for f2_by_idx in f2s_by_fold.values():
+            indices = list(f2_by_idx.keys())
+            f2arr = np.array([f2_by_idx[idx] for idx in indices])
+            weights = sigmoid(weighted * (f2arr - f2arr.mean()) / f2arr.std())
+            weights /= weights.mean()
+            for idx, w in zip(indices, weights):
+                predictions[idx] *= w
     prediction = pd.concat(predictions)
     if merge_mode == 'vote':
         return (prediction > THRESHOLD).groupby(level=0).median()
