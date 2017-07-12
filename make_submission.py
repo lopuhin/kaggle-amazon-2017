@@ -6,7 +6,6 @@ from pathlib import Path
 import re
 import multiprocessing
 from typing import Tuple, Optional
-import warnings
 
 import pandas as pd
 import numpy as np
@@ -23,6 +22,7 @@ def main():
     arg('--output')
     arg('--recalibrate', type=int, default=1)
     arg('--weighted', type=float, default=0)
+    arg('--average-thresholds', type=int, default=0)
     arg('--merge', default='mean', choices=['mean', 'gmean', 'vote'])
     arg('--verbose', action='store_true')
     args = parser.parse_args()
@@ -34,6 +34,7 @@ def main():
                 paths,
                 pool.map(partial(load_recalibrate_prediction,
                                  recalibrate=args.recalibrate,
+                                 average_thresholds=args.average_thresholds,
                                  verbose=args.verbose),
                          paths)):
             if args.output:
@@ -96,7 +97,8 @@ THRESHOLD = 0.2
 
 
 def load_recalibrate_prediction(
-        path: Path, recalibrate: bool, verbose=False,
+        path: Path, recalibrate: bool, average_thresholds: bool,
+        verbose=False,
         ) -> Tuple[Optional[pd.DataFrame], pd.DataFrame, float]:
     prefix, aug_kind = path.stem.split('_', 1)
     assert prefix in {'test', 'val'}
@@ -114,6 +116,7 @@ def load_recalibrate_prediction(
             print('Train F2 {:.5f}, thresholds: {}'.format(f2, thresholds))
         valid_dfs = []
         valid_df_logits = logit(valid_df)
+        all_fold_thresholds = []
         for train_ids, valid_ids in (
                 KFold(n_splits=5, shuffle=True).split(true_data)):
             fold_thresholds, f2 = optimise_f2_thresholds(
@@ -126,6 +129,9 @@ def load_recalibrate_prediction(
                       .format(f2, dataset.f2_score(true_data[valid_ids],
                                                    valid_dfs[-1] > THRESHOLD),
                               fold_thresholds))
+            all_fold_thresholds.append(fold_thresholds)
+        if average_thresholds:
+            thresholds = np.mean(all_fold_thresholds, axis=0)
         valid_df = pd.concat(valid_dfs).loc[valid_df.index]
     f2_score = dataset.f2_score(true_data, valid_df.as_matrix() > THRESHOLD)
 
@@ -165,21 +171,32 @@ def sigmoid(x):
     return 1 / (1 + np.exp(-x))
 
 
-def optimise_f2_thresholds(y, p, verbose=False, resolution=100):
+def optimise_f2_thresholds(y, p, verbose=False, resolution=100,
+                           adjust_initial=False, adjust_rare=False):
     def mf(x):
         p2 = np.zeros_like(p)
         for i in range(dataset.N_CLASSES):
             p2[:, i] = (p[:, i] > x[i]).astype(np.int)
-        # TODO - calculate only one column
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore')
-            score = dataset.f2_score(y, p2)
+        score = dataset.f2_score(y, p2)
         return score
 
-    x = [THRESHOLD] * dataset.N_CLASSES
+    if adjust_initial:
+        best_score = 0
+        best_i2 = 0
+        for i2 in range(resolution):
+            i2 /= resolution
+            x = [i2] * dataset.N_CLASSES
+            score = mf(x)
+            if score > best_score:
+                best_i2 = i2
+                best_score = score
+    else:
+        best_i2 = THRESHOLD
+
+    x = [best_i2] * dataset.N_CLASSES
     best_score = 0
     for i, cls in enumerate(dataset.CLASSES):
-        if cls in dataset.RARE_CLASSES:
+        if not adjust_rare and cls in dataset.RARE_CLASSES:
             continue
         best_i2 = 0
         best_score = 0

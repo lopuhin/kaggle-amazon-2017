@@ -1,9 +1,13 @@
 TODO:
 
-- tweak blending
 - add from scratch models
 
 submissions:
+
+- default submit
+- try "--weighted 1"
+- try "--average-thresholds 1"
+- try bayes submission
 
 nn training:
 - try RandomSizedCrop with larger min area (~0.25)
