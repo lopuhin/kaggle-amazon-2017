@@ -10,12 +10,11 @@ import random
 import shutil
 
 import matplotlib.pyplot as plt
-
 import json_lines
 import numpy as np
+import pandas as pd
 from PIL import Image
 from scipy.stats.mstats import gmean
-from sklearn.model_selection import KFold
 import statprof
 import torch
 from torch import nn
@@ -207,11 +206,11 @@ def imap_fixed_output_buffer(fn, it, threads: int):
             yield future.result()
 
 
-def gmean_df(df):
+def gmean_df(df: pd.DataFrame) -> pd.DataFrame:
     return df.groupby(level=0).agg(lambda x: gmean(list(x)))
 
 
-def mean_df(df):
+def mean_df(df: pd.DataFrame) -> pd.DataFrame:
     return df.groupby(level=0).mean()
 
 

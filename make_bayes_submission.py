@@ -2,7 +2,8 @@
 import argparse
 import itertools
 from pathlib import Path
-from typing import Tuple
+import multiprocessing
+from typing import Optional, Tuple
 
 import pandas as pd
 import numpy as np
@@ -10,25 +11,34 @@ import tqdm
 
 import dataset
 import utils
+from make_submission import get_true_data
 
 
 def main():
     parser = argparse.ArgumentParser()
     arg = parser.add_argument
     arg('predictions', nargs='+')
-    arg('output')
+    arg('--output')
+    arg('--merge', default='mean', choices=['mean', 'gmean'])
     args = parser.parse_args()
 
-    predictions, f2s = [], []
+    test_predictions, valid_predictions, valid_f2s = [], [], []
     for filename in args.predictions:
-        pred, f2 = load_prediction(Path(filename))
-        predictions.append(pred)
-        f2s.append(f2)
-        print('{:.5f} {}'.format(f2, filename))
-    print('Mean score: {:.5f}'.format(np.mean(f2s)))
+        test_pred, valid_pred, valid_f2 = load_prediction(Path(filename))
+        if args.output:
+            test_predictions.append(test_pred)
+        valid_f2s.append(valid_f2)
+        valid_predictions.append(valid_pred)
+        print('{:.5f} valid F2 for {}'.format(valid_f2, filename))
+    print('Mean F2 score: {:.5f}'.format(np.mean(valid_f2s)))
+    valid_prediction = merge_predictions(valid_predictions, args.merge)
+    print('Final valid F2 after {} blend: {:.5f}'.format(
+        args.merge, dataset.f2_score(get_true_data(valid_prediction),
+                                     valid_prediction.as_matrix())))
+    if not args.output:
+        return
 
-    prediction = get_df_prediction(
-        pd.concat(predictions).groupby(level=0).mean())
+    prediction = merge_predictions(test_predictions, args.merge)
     out_df = pd.DataFrame([
         {'image_name': image_name,
          'tags': ' '.join(c for c in prediction.columns if row[c])
@@ -42,30 +52,42 @@ def main():
     print('Saved submission to {}'.format(args.output))
 
 
-def load_prediction(path: Path) -> Tuple[pd.DataFrame, float]:
-    valid_df = (pd.read_csv(path.parent / 'valid.csv', index_col=0)
-                .groupby(level=0).mean())
-
-    true_df = pd.read_csv(utils.DATA_ROOT / 'train_v2.csv', index_col=0)
-    true_data = np.zeros((len(valid_df), dataset.N_CLASSES), dtype=np.uint8)
-    for i, tags in enumerate(true_df.loc[valid_df.index]['tags']):
-        for tag in tags.split():
-            true_data[i, dataset.CLASSES.index(tag)] = 1
+def load_prediction(path: Path
+                    ) -> Tuple[Optional[pd.DataFrame], pd.DataFrame, float]:
+    prefix, aug_kind = path.stem.split('_', 1)
+    assert prefix in {'test', 'val'}
+    valid_df = pd.read_hdf(
+        path.parent / 'val_{}.h5'.format(aug_kind), index_col=0)
+    true_data = get_true_data(valid_df)
 
     threshold = 0.2
     f2_score = dataset.f2_score(true_data, valid_df.as_matrix() > threshold)
-    print('{} with default threshold: {:.5f}'.format(path, f2_score))
 
-    valid_predictions = get_df_prediction(valid_df)
-    f2_score = dataset.f2_score(true_data, valid_predictions.as_matrix())
+    # valid_predictions = get_df_prediction(valid_df)
+    # f2_score = dataset.f2_score(true_data, valid_predictions.as_matrix())
 
-    test_df = pd.read_csv(path, index_col=0).groupby(level=0).mean()
-    return test_df, f2_score
+    if path.exists() and prefix != 'val':
+        test_df = pd.read_hdf(path, index_col=0).groupby(level=0).mean()
+    else:
+        test_df = None
+    return test_df, valid_df, f2_score
 
 
-def get_df_prediction(df):
-    data = [get_item_prediction(item)
-            for _, item in tqdm.tqdm(list(df.iterrows()))]
+def merge_predictions(predictions, merge_mode):
+    prediction = pd.concat(predictions)  # type: pd.DataFrame
+    if merge_mode == 'mean':
+        df = utils.mean_df(prediction)
+    elif merge_mode == 'gmean':
+        df = utils.gmean_df(prediction)
+    else:
+        raise ValueError('Unexpected merge_mode')
+    return get_df_prediction(df)
+
+
+def get_df_prediction(df: pd.DataFrame) -> pd.DataFrame:
+    with multiprocessing.Pool() as pool:
+        data = pool.map(get_item_prediction,
+                        [item for _, item in df.iterrows()])
     return pd.DataFrame(data=data, index=df.index, columns=df.columns)
 
 
@@ -105,13 +127,16 @@ def get_true_candidates(item, free_vars, value):
             value[i] = v
         if value.sum() == 0:
             continue
-        # FIXME this two conditions make the score much worse
+        # This two conditions make the score much worse, probably because
+        # individual probabilities already account for these conditions.
+        '''
         if value[dataset.CLOUDY_ID] and value.sum() > 1:
             # cloudy + something = 0
             continue
         if sum(value[i] for i in dataset.WEATHER_IDS) > 1:
             # several weather tags
             continue
+        '''
         prob = 1.0
         for v, p in zip(value, item):
             if v == 0:
@@ -123,6 +148,8 @@ def get_true_candidates(item, free_vars, value):
 
 
 def f2_fast(y_true, y_pred):
+    ''' F2 for a single row.
+    '''
     tp = y_true @ y_pred
     r = tp / y_true.sum()
     if r == 0:
