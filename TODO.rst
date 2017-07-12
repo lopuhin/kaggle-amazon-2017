@@ -8,6 +8,7 @@ submissions:
 - try "--weighted 1"
 - try "--average-thresholds 1"
 - try bayes submission
+- albu merge
 
 nn training:
 - try RandomSizedCrop with larger min area (~0.25)

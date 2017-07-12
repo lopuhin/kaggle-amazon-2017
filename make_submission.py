@@ -20,6 +20,7 @@ def main():
     arg = parser.add_argument
     arg('predictions', nargs='+')
     arg('--output')
+    arg('--output-probs', action='store_true')
     arg('--recalibrate', type=int, default=1)
     arg('--weighted', type=float, default=0)
     arg('--average-thresholds', type=int, default=0)
@@ -58,21 +59,26 @@ def main():
 
     prediction = merge_predictions(
         test_predictions, args.merge,
-        f2s=valid_f2s, folds=folds, weighted=args.weighted)
-    out_df = pd.DataFrame([
-        {'image_name': image_name,
-         'tags': ' '.join(c for c in prediction.columns if row[c])
-         } for image_name, row in prediction.iterrows()])
-    out_df.set_index('image_name', inplace=True)
-    sample_submission = pd.read_csv(
-        utils.DATA_ROOT / 'sample_submission_v2.csv', index_col=0)
-    assert set(sample_submission.index) == set(out_df.index)
-    out_df = out_df.loc[sample_submission.index]
-    out_df.to_csv(args.output, index_label='image_name')
-    print('Saved submission to {}'.format(args.output))
+        f2s=valid_f2s, folds=folds, weighted=args.weighted,
+        do_threshold=not args.output_probs)
+    if args.output_probs:
+        prediction.to_csv(args.output, index_label='image_name')
+    else:
+        out_df = pd.DataFrame([
+            {'image_name': image_name,
+             'tags': ' '.join(c for c in prediction.columns if row[c])
+             } for image_name, row in prediction.iterrows()])
+        out_df.set_index('image_name', inplace=True)
+        sample_submission = pd.read_csv(
+            utils.DATA_ROOT / 'sample_submission_v2.csv', index_col=0)
+        assert set(sample_submission.index) == set(out_df.index)
+        out_df = out_df.loc[sample_submission.index]
+        out_df.to_csv(args.output, index_label='image_name')
+        print('Saved submission to {}'.format(args.output))
 
 
-def merge_predictions(predictions, merge_mode, f2s, folds, weighted=0):
+def merge_predictions(predictions, merge_mode, f2s, folds, weighted=0,
+                      do_threshold=True):
     if weighted:
         f2s_by_fold = defaultdict(dict)
         for i, (fold, f2) in enumerate(zip(folds, f2s)):
@@ -86,11 +92,13 @@ def merge_predictions(predictions, merge_mode, f2s, folds, weighted=0):
                 predictions[idx] *= w
     prediction = pd.concat(predictions)
     if merge_mode == 'vote':
+        assert do_threshold
         return (prediction > THRESHOLD).groupby(level=0).median()
-    elif merge_mode == 'mean':
-        return utils.mean_df(prediction) > THRESHOLD
+    if merge_mode == 'mean':
+        prediction = utils.mean_df(prediction)
     elif merge_mode == 'gmean':
-        return utils.gmean_df(prediction) > THRESHOLD
+        prediction = utils.gmean_df(prediction)
+    return prediction > THRESHOLD if do_threshold else prediction
 
 
 THRESHOLD = 0.2
