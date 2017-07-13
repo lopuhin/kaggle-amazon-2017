@@ -96,7 +96,7 @@ def add_args(parser):
 
 def train(args, model: nn.Module, criterion, *, train_loader, valid_loader,
           validation, init_optimizer, save_predictions=None, n_epochs=None,
-          patience=2):
+          patience=2, max_lr_changes=2):
     lr = args.lr
     n_epochs = n_epochs or args.n_epochs
     optimizer = init_optimizer(lr)
@@ -115,6 +115,7 @@ def train(args, model: nn.Module, criterion, *, train_loader, valid_loader,
         epoch = 1
         step = 0
         best_valid_loss = float('inf')
+    lr_changes = 0
 
     save = lambda ep: torch.save({
         'model': model.state_dict(),
@@ -171,6 +172,9 @@ def train(args, model: nn.Module, criterion, *, train_loader, valid_loader,
             elif (patience and epoch - lr_reset_epoch > patience and
                   min(valid_losses[-patience:]) > best_valid_loss):
                 # "patience" epochs without improvement
+                lr_changes +=1
+                if lr_changes >= max_lr_changes:
+                    break
                 lr /= 5
                 lr_reset_epoch = epoch
                 optimizer = init_optimizer(lr)
