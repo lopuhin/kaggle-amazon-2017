@@ -11,6 +11,7 @@ resnet101 = M.resnet101
 resnet152 = M.resnet152
 vgg16 = M.vgg16
 vgg16_bn = M.vgg16_bn
+densenet121 = M.densenet121
 
 
 class ResNetFinetune(nn.Module):
