@@ -123,7 +123,7 @@ def predict(model, paths: List[Path], out_path: Path,
     all_outputs = np.concatenate(all_outputs)
     df = pd.DataFrame(data=all_outputs, index=all_stems,
                       columns=dataset.CLASSES)
-    df = utils.gmean_df(df)
+    df = utils.mean_df(df)
     df.to_hdf(out_path, 'prob', index_label='image_name')
     print('Saved predictions to {}'.format(out_path))
 
