@@ -43,7 +43,7 @@ def main():
             valid_predictions.append(valid_pred)
             valid_f2s.append(valid_f2)
             folds.append(int(
-                re.match(r'fold_?(\d+)_', path.parent.name).groups()[0]))
+                re.match(r'fold_?(\d+)', path.parent.name).groups()[0]))
             print('{:.5f} valid F2 for {}'.format(valid_f2, path))
     print('Mean F2 score: {:.5f}'.format(np.mean(valid_f2s)))
     valid_prediction = merge_predictions(
