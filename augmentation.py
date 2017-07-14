@@ -4,8 +4,6 @@ import math
 from PIL import Image
 from torchvision import transforms
 
-import utils
-
 
 class RandomTranspose:
     def __call__(self, image):

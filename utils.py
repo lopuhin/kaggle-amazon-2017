@@ -173,7 +173,7 @@ def train(args, model: nn.Module, criterion, *, train_loader, valid_loader,
                   min(valid_losses[-patience:]) > best_valid_loss):
                 # "patience" epochs without improvement
                 lr_changes +=1
-                if lr_changes >= max_lr_changes:
+                if lr_changes > max_lr_changes:
                     break
                 lr /= 5
                 lr_reset_epoch = epoch
