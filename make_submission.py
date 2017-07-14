@@ -26,6 +26,7 @@ def main():
     arg('--average-thresholds', type=int, default=0)
     arg('--merge', default='mean', choices=['mean', 'gmean', 'vote'])
     arg('--verbose', action='store_true')
+    arg('--drop-bad', type=float, help='drop worst predictions ratio')
     args = parser.parse_args()
 
     test_predictions, valid_predictions, valid_f2s, folds = [], [], [], []
@@ -46,6 +47,19 @@ def main():
                 re.match(r'fold_?(\d+)', path.parent.name).groups()[0]))
             print('{:.5f} valid F2 for {}'.format(valid_f2, path))
     print('Mean F2 score: {:.5f}'.format(np.mean(valid_f2s)))
+
+    if args.drop_bad:
+        indexed_f2s = list(enumerate(valid_f2s))
+        indexed_f2s.sort(key=lambda x: x[1])
+        drop_bad = int(len(indexed_f2s) * args.drop_bad)
+        to_keep = {i for i, _ in indexed_f2s[drop_bad:]}
+        valid_predictions = _filter_lst(valid_predictions, to_keep)
+        test_predictions = _filter_lst(test_predictions, to_keep)
+        folds = _filter_lst(folds, to_keep)
+        valid_f2s = _filter_lst(valid_f2s, to_keep)
+        print('Mean F2 score afte drop {}: {:.5f}'.format(
+            args.drop_bad, np.mean(valid_f2s)))
+
     valid_prediction = merge_predictions(
         valid_predictions, args.merge,
         f2s=valid_f2s, folds=folds, weighted=args.weighted)
@@ -220,6 +234,10 @@ def optimise_f2_thresholds(y, p, verbose=False, resolution=100,
             print(i, best_i2, best_score)
 
     return x, best_score
+
+
+def _filter_lst(lst, indices):
+    return [x for i, x in enumerate(lst) if i in indices]
 
 
 if __name__ == '__main__':
