@@ -19,8 +19,11 @@ def main():
     parser = argparse.ArgumentParser()
     arg = parser.add_argument
     arg('predictions', nargs='+')
-    arg('--output')
-    arg('--output-probs', action='store_true')
+    arg('--output', help='output prediction')
+    arg('--output-probs', action='store_true',
+        help='don\'t binarize, output probabilities')
+    arg('--oof-probs-output',
+        help='output oof probabilities here (--output-probs implied)')
     arg('--recalibrate', type=int, default=1)
     arg('--weighted', type=float, default=0)
     arg('--average-thresholds', type=int, default=0)
@@ -60,14 +63,23 @@ def main():
         print('Mean F2 score afte drop {}: {:.5f}'.format(
             args.drop_bad, np.mean(valid_f2s)))
 
+    do_threshold = not (args.output_probs or args.oof_probs_output)
     valid_prediction = merge_predictions(
         valid_predictions, args.merge,
-        f2s=valid_f2s, folds=folds, weighted=args.weighted)
+        f2s=valid_f2s, folds=folds, weighted=args.weighted,
+        do_threshold=do_threshold)
+    if do_threshold:
+        valid_prediction_binary = valid_prediction
+    else:
+        valid_prediction_binary = valid_prediction > THRESHOLD
     print('Final valid F2 after {} blend{}: {:.5f}'.format(
         args.merge,
         ' score weighted {}'.format(args.weighted) if args.weighted else '',
         dataset.f2_score(get_true_data(valid_prediction),
-                         valid_prediction.as_matrix())))
+                         valid_prediction_binary.as_matrix())))
+
+    if args.oof_probs_output:
+        valid_prediction.to_csv(args.oof_probs_output, index_label='image_name')
     if not args.output:
         return
 
