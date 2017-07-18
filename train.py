@@ -23,13 +23,15 @@ import augmentation
 
 
 class PlanetDataset(Dataset):
-    def __init__(self, paths: List[Path], transform):
+    def __init__(self, paths: List[Path], transform, classes: List[str]):
         self.transform = transform
         self.images = {p.stem: utils.load_image(p) for p in tqdm.tqdm(paths)}
         self.keys = sorted(self.images)
         train_labels = pd.read_csv(utils.DATA_ROOT / 'train_v2.csv')
+        self.classes = classes
         self.train_labels = {
-            stem: [dataset.CLASSES.index(t) for t in tags.split()]
+            stem: [self.classes.index(t) for t in tags.split()
+                   if t in self.classes]
             for stem, tags in zip(train_labels['image_name'],
                                   train_labels['tags'])}
 
@@ -40,7 +42,7 @@ class PlanetDataset(Dataset):
         key = self.keys[idx]
         img = self.images[key]
         x = self.transform(img)
-        y = np.zeros(dataset.N_CLASSES, dtype=np.float32)
+        y = np.zeros(len(self.classes), dtype=np.float32)
         for cls in self.train_labels[key]:
             y[cls] = True
         return x, torch.from_numpy(y)
@@ -98,7 +100,8 @@ class CenterCropDataset:
 
 
 def predict(model, paths: List[Path], out_path: Path,
-            transform, batch_size: int, test_aug: str, n_random_aug: int):
+            transform, batch_size: int, test_aug: str, n_random_aug: int,
+            classes: List[str]):
     if test_aug == 'center':
         ds = CenterCropDataset(paths)
     elif test_aug == 'random':
@@ -122,7 +125,7 @@ def predict(model, paths: List[Path], out_path: Path,
         all_stems.extend(stems)
     all_outputs = np.concatenate(all_outputs)
     df = pd.DataFrame(data=all_outputs, index=all_stems,
-                      columns=dataset.CLASSES)
+                      columns=classes)
     df = utils.mean_df(df)
     df.to_hdf(out_path, 'prob', index_label='image_name')
     print('Saved predictions to {}'.format(out_path))
@@ -158,15 +161,23 @@ def main():
     arg('--test-aug', choices=['center', 'random', '12crops', 'scaled'])
     arg('--n-random-aug', type=int, default=8,
         help='number of random test time augmentations')
+    arg('--classes', help='dash separated, e.g. road-water')
     utils.add_args(parser)
     args = parser.parse_args()
 
     root = Path(args.root)
-    model = getattr(models, args.model)(num_classes=dataset.N_CLASSES)
+    if args.classes:
+        classes = sorted(args.classes.split('-'))
+    else:
+        classes = dataset.CLASSES
+    model = getattr(models, args.model)(num_classes=len(classes))
     model = utils.cuda(model)
     loss = f2_loss if args.f2_loss else nn.MultiLabelSoftMarginLoss()
 
     train_paths, valid_paths = load_fold(args.fold)
+    if args.limit:
+        train_paths = train_paths[:args.limit]
+        valid_paths = train_paths[:args.limit // 10]
 
     aug_transform = (augmentation.with_scale_transform if args.scale_aug else
                      augmentation.default_transform)
@@ -178,7 +189,7 @@ def main():
 
     def make_loader(paths):
         return DataLoader(
-            dataset=PlanetDataset(paths, transform),
+            dataset=PlanetDataset(paths, transform, classes),
             shuffle=True,
             num_workers=args.workers,
             batch_size=args.batch_size,
@@ -223,6 +234,7 @@ def main():
     elif args.mode.startswith('predict'):
         utils.load_best_model(model, root)
         predict_kwargs = dict(
+            classes=classes,
             batch_size=args.batch_size,
             transform=transform,
             test_aug=args.test_aug,

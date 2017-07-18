@@ -41,7 +41,7 @@ def f2_score(y_true: np.ndarray, y_pred: np.ndarray, eps=1e-7) -> float:
     # same as fbeta_score(y_true, y_pred, beta=2, average='samples')
     # but faster
     tp = (y_true * y_pred).sum(axis=1)
-    r = tp / y_true.sum(axis=1)
+    r = tp / (y_true.sum(axis=1) + eps)
     p = tp / (y_pred.sum(axis=1) + eps)
     beta2 = 4
     f2 = (1 + beta2) * p * r / (beta2 * p + r + eps)
