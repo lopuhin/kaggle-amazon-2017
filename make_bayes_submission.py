@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import itertools
+from functools import partial
 from pathlib import Path
 import multiprocessing
 from typing import Optional, Tuple
@@ -84,15 +85,15 @@ def merge_predictions(predictions, merge_mode):
     return get_df_prediction(df)
 
 
-def get_df_prediction(df: pd.DataFrame) -> pd.DataFrame:
+def get_df_prediction(df: pd.DataFrame, min_p=0.05, max_p=0.5) -> pd.DataFrame:
     with multiprocessing.Pool() as pool:
-        data = pool.map(get_item_prediction,
+        data = pool.map(partial(get_item_prediction, min_p=min_p, max_p=max_p),
                         [item for _, item in df.iterrows()])
     return pd.DataFrame(data=data, index=df.index, columns=df.columns)
 
 
-def get_item_prediction(item):
-    free_vars, value = get_free_vars(item)
+def get_item_prediction(item, min_p, max_p):
+    free_vars, value = get_free_vars(item, min_p, max_p)
     if not free_vars:
         return value
     ys = get_true_candidates(item, free_vars, value)
@@ -108,7 +109,7 @@ def get_item_prediction(item):
     return value
 
 
-def get_free_vars(item, min_p=0.05, max_p=0.5):
+def get_free_vars(item, min_p, max_p):
     free_vars = []
     value = np.zeros(dataset.N_CLASSES)
     for i, p in enumerate(item):
