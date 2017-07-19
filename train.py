@@ -23,12 +23,14 @@ import augmentation
 
 
 class PlanetDataset(Dataset):
-    def __init__(self, paths: List[Path], transform, classes: List[str]):
+    def __init__(self, paths: List[Path], transform, classes: List[str],
+                 softmax: bool):
         self.transform = transform
         self.images = {p.stem: utils.load_image(p) for p in tqdm.tqdm(paths)}
         self.keys = sorted(self.images)
         train_labels = pd.read_csv(utils.DATA_ROOT / 'train_v2.csv')
         self.classes = classes
+        self.softmax = softmax
         self.train_labels = {
             stem: [self.classes.index(t) for t in tags.split()
                    if t in self.classes]
@@ -45,7 +47,11 @@ class PlanetDataset(Dataset):
         y = np.zeros(len(self.classes), dtype=np.float32)
         for cls in self.train_labels[key]:
             y[cls] = True
-        return x, torch.from_numpy(y)
+        if self.softmax:
+            y = y.argmax()
+        else:
+            y = torch.from_numpy(y)
+        return x, y
 
 
 def validation(model: nn.Module, criterion, valid_loader) -> Dict[str, float]:
@@ -58,9 +64,17 @@ def validation(model: nn.Module, criterion, valid_loader) -> Dict[str, float]:
         outputs = model(inputs)
         loss = criterion(outputs, targets)
         losses.append(loss.data[0])
-        f2_scores.append(dataset.f2_score(
-            y_true=targets.data.cpu().numpy(),
-            y_pred=F.sigmoid(outputs).data.cpu().numpy() > 0.2))
+        if isinstance(criterion, nn.CrossEntropyLoss):
+            targets_data = targets.data.cpu().numpy()
+            ohe_targets = np.zeros((targets_data.size, outputs.size()[1]))
+            ohe_targets[np.arange(targets_data.size), targets_data] = 1
+            f2_scores.append(dataset.f2_score(
+                y_true=ohe_targets,
+                y_pred=F.softmax(outputs).data.cpu().numpy() > 0.2))
+        else:
+            f2_scores.append(dataset.f2_score(
+                y_true=targets.data.cpu().numpy(),
+                y_pred=F.sigmoid(outputs).data.cpu().numpy() > 0.2))
     valid_loss = np.mean(losses)  # type: float
     valid_f2 = np.mean(f2_scores)  # type: float
     print('Valid loss: {:.4f}, F2: {:.4f}'.format(valid_loss, valid_f2))
@@ -156,6 +170,7 @@ def main():
         default='train')
     arg('--limit', type=int, help='use only N images for valid/train')
     arg('--f2-loss', action='store_true')
+    arg('--softmax', action='store_true')
     arg('--aug', choices=['default', 'with_scale', 'downscale'],
         default='default')
     arg('--stratified', action='store_true')
@@ -174,7 +189,15 @@ def main():
         classes = dataset.CLASSES
     model = getattr(models, args.model)(num_classes=len(classes))
     model = utils.cuda(model)
-    loss = f2_loss if args.f2_loss else nn.MultiLabelSoftMarginLoss()
+
+    if args.f2_loss and args.softmax:
+        parser.error('Choose either --f2-loss or --softmax')
+    if args.f2_loss:
+        loss = f2_loss
+    elif args.softmax:
+        loss = nn.CrossEntropyLoss()
+    else:
+        loss = nn.MultiLabelSoftMarginLoss()
 
     train_paths, valid_paths = load_fold(args.fold)
     if args.limit:
@@ -195,7 +218,7 @@ def main():
 
     def make_loader(paths):
         return DataLoader(
-            dataset=PlanetDataset(paths, transform, classes),
+            dataset=PlanetDataset(paths, transform, classes, args.softmax),
             shuffle=True,
             num_workers=args.workers,
             batch_size=args.batch_size,
