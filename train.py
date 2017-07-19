@@ -156,12 +156,14 @@ def main():
         default='train')
     arg('--limit', type=int, help='use only N images for valid/train')
     arg('--f2-loss', action='store_true')
-    arg('--scale-aug', action='store_true')
+    arg('--aug', choices=['default', 'with_scale', 'downscale'],
+        default='default')
     arg('--stratified', action='store_true')
     arg('--test-aug', choices=['center', 'random', '12crops', 'scaled'])
     arg('--n-random-aug', type=int, default=8,
         help='number of random test time augmentations')
     arg('--classes', help='dash separated, e.g. road-water')
+    arg('--patience', type=int, default=4)
     utils.add_args(parser)
     args = parser.parse_args()
 
@@ -179,8 +181,12 @@ def main():
         train_paths = train_paths[:args.limit]
         valid_paths = train_paths[:args.limit // 10]
 
-    aug_transform = (augmentation.with_scale_transform if args.scale_aug else
-                     augmentation.default_transform)
+    aug_transform = {
+        'default': augmentation.default_transform,
+        'with_scale': augmentation.with_scale_transform,
+        'downscale': augmentation.downscale_transform,
+    }[args.aug]
+
     transform = Compose([
         aug_transform,
         utils.img_transform_inception if 'inception' in args.model
@@ -210,7 +216,7 @@ def main():
             train_loader=train_loader,
             valid_loader=valid_loader,
             validation=validation,
-            patience=4,
+            patience=args.patience,
         )
         if getattr(model, 'finetune', None):
             utils.train(

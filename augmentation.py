@@ -80,3 +80,8 @@ with_scale_transform = transforms.Compose([
     RandomSizedCrop(224),
     RandomTranspose(),
 ])
+
+downscale_transform = transforms.Compose([
+    transforms.Scale(224),
+    RandomTranspose(),
+])
