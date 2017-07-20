@@ -134,7 +134,10 @@ def get_true_candidates(item, free_vars, value, add_hacks):
         if add_hacks:
             if value[dataset.CLOUDY_ID] and value.sum() > 1:
                 # cloudy + something = 0
-                prob *= 0.9
+                if value[dataset.CLASSES.index('primary')]:
+                    prob *= 0.87
+                else:
+                    prob *= 0.9
             elif sum(value[i] for i in dataset.WEATHER_IDS) > 1:
                 # several weather tags
                 prob *= 0.9
