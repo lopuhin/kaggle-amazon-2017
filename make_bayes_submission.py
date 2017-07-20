@@ -85,18 +85,20 @@ def merge_predictions(predictions, merge_mode):
     return get_df_prediction(df)
 
 
-def get_df_prediction(df: pd.DataFrame, min_p=0.05, max_p=0.5) -> pd.DataFrame:
+def get_df_prediction(df: pd.DataFrame, min_p=0.05, max_p=0.5, add_hacks=False,
+                      ) -> pd.DataFrame:
     with multiprocessing.Pool() as pool:
-        data = pool.map(partial(get_item_prediction, min_p=min_p, max_p=max_p),
-                        [item for _, item in df.iterrows()])
+        fn = partial(get_item_prediction,
+                     min_p=min_p, max_p=max_p, add_hacks=add_hacks)
+        data = pool.map(fn, [item for _, item in df.iterrows()])
     return pd.DataFrame(data=data, index=df.index, columns=df.columns)
 
 
-def get_item_prediction(item, min_p, max_p):
+def get_item_prediction(item, min_p, max_p, add_hacks):
     free_vars, value = get_free_vars(item, min_p, max_p)
     if not free_vars:
         return value
-    ys = get_true_candidates(item, free_vars, value)
+    ys = get_true_candidates(item, free_vars, value, add_hacks=add_hacks)
     scores = []
     for var_set in itertools.product(*free_vars):
         for i, v in var_set:
@@ -121,7 +123,7 @@ def get_free_vars(item, min_p, max_p):
     return free_vars, value
 
 
-def get_true_candidates(item, free_vars, value, add_hacks=False):
+def get_true_candidates(item, free_vars, value, add_hacks):
     ys = []
     for var_set in itertools.product(*free_vars):
         for i, v in var_set:
@@ -129,12 +131,13 @@ def get_true_candidates(item, free_vars, value, add_hacks=False):
         if value.sum() == 0:
             continue
         prob = 1.0
-        if value[dataset.CLOUDY_ID] and value.sum() > 1:
-            # cloudy + something = 0
-            prob *= 0.9
-        elif sum(value[i] for i in dataset.WEATHER_IDS) > 1:
-            # several weather tags
-            prob *= 0.9
+        if add_hacks:
+            if value[dataset.CLOUDY_ID] and value.sum() > 1:
+                # cloudy + something = 0
+                prob *= 0.9
+            elif sum(value[i] for i in dataset.WEATHER_IDS) > 1:
+                # several weather tags
+                prob *= 0.9
         for v, p in zip(value, item):
             if v == 0:
                 p = 1 - p
