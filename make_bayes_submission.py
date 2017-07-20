@@ -121,24 +121,20 @@ def get_free_vars(item, min_p, max_p):
     return free_vars, value
 
 
-def get_true_candidates(item, free_vars, value):
+def get_true_candidates(item, free_vars, value, add_hacks=False):
     ys = []
     for var_set in itertools.product(*free_vars):
         for i, v in var_set:
             value[i] = v
         if value.sum() == 0:
             continue
-        # This two conditions make the score much worse, probably because
-        # individual probabilities already account for these conditions.
-        '''
+        prob = 1.0
         if value[dataset.CLOUDY_ID] and value.sum() > 1:
             # cloudy + something = 0
-            continue
-        if sum(value[i] for i in dataset.WEATHER_IDS) > 1:
+            prob *= 0.9
+        elif sum(value[i] for i in dataset.WEATHER_IDS) > 1:
             # several weather tags
-            continue
-        '''
-        prob = 1.0
+            prob *= 0.9
         for v, p in zip(value, item):
             if v == 0:
                 p = 1 - p
